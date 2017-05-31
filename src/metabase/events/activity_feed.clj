@@ -7,7 +7,10 @@
              [card :refer [Card]]
              [dashboard :refer [Dashboard]]
              [table :as table]]
-            [toucan.db :as db]))
+            [metabase.query-processor :as qp]
+            [metabase.query-processor.util :as qputil]
+            [toucan.db :as db]
+            [metabase.util :as u]))
 
 (def ^:const activity-feed-topics
   "The `Set` of event topics which are subscribed to for use in the Metabase activity feed."
@@ -36,11 +39,20 @@
 
 ;;; ## ---------------------------------------- EVENT PROCESSING ----------------------------------------
 
+(defn- inner-query->source-table-id
+  "Recurse through INNER-QUERY source-queries as needed until we can return the ID of this query's source-table."
+  [inner-query]
+  (or (when-let [source-table (qputil/get-normalized inner-query :source-table)]
+        (u/get-id source-table))
+      (when-let [source-query (qputil/get-normalized inner-query :source-query)]
+        (recur source-query))))
 
 (defn- process-card-activity! [topic object]
   (let [details-fn  #(select-keys % [:name :description])
-        database-id (get-in object [:dataset_query :database])
-        table-id    (get-in object [:dataset_query :query :source_table])]
+        query       (u/ignore-exceptions (qp/expand (:dataset_query object)))
+        database-id (when-let [database (:database query)]
+                      (u/get-id database))
+        table-id    (inner-query->source-table-id (:query query))]
     (activity/record-activity!
       :topic       topic
       :object      object

@@ -42,7 +42,8 @@
    :made_public_by_id nil
    :public_uuid       nil
    :query_type        "query"
-   :cache_ttl         nil})
+   :cache_ttl         nil
+   :result_metadata   nil})
 
 ;; ## GET /api/card
 ;; Filter cards by database

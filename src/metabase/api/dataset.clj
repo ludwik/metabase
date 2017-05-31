@@ -12,7 +12,8 @@
             [metabase.api.common :as api]
             [metabase.api.common.internal :refer [route-fn-name]]
             [metabase.models
-             [database :refer [Database]]
+             [card :refer [Card]]
+             [database :as database, :refer [Database]]
              [query :as query]]
             [metabase.query-processor.util :as qputil]
             [metabase.util.schema :as su]
@@ -32,13 +33,37 @@
   {:max-results           max-results
    :max-results-bare-rows max-results-bare-rows})
 
-(api/defendpoint POST "/"
-  "Execute a query and retrieve the results in the usual format."
-  [:as {{:keys [database] :as body} :body}]
+
+(defn- has-source-query?
+  "Is this QUERY one that uses nested queries (i.e., does it use another query as its source)?"
+  [query]
+  ;; Check whether the query specifies the 'Virtual' database (using the "secret" ID we assigned to it)
+  (= (:database query) database/virtual-id))
+
+(defn- execute-nested-query
+  "For a QUERY that uses a saved Card as its source, check permissions as appropriate and add the approprate `:source-query` clause."
+  [{inner-query :query, :as outer-query}]
+  (let [[_ card-id-str] (re-matches #"^card__(\d+$)" (or (qputil/get-normalized inner-query :source-table)
+                                                         (throw (Exception. "Missing :source_table in query."))))]
+    (when-not card-id-str
+      (throw (Exception. (str "Invalid source query ID. Expected a string like 'card__100'. Got: " card-id-str))))
+    (let [card-id (Integer/parseInt card-id-str)]
+      (api/read-check Card card-id)
+      (qp/dataset-query outer-query
+        {:executed-by api/*current-user-id*, :context :ad-hoc, :card-id card-id, :nested-query? true}))))
+
+(defn- execute-query [{:keys [database], :as query}]
   (api/read-check Database database)
   ;; add sensible constraints for results limits on our query
-  (let [query (assoc body :constraints default-query-constraints)]
-    (qp/dataset-query query {:executed-by api/*current-user-id*, :context :ad-hoc})))
+  (qp/dataset-query (assoc query :constraints default-query-constraints)
+    {:executed-by api/*current-user-id*, :context :ad-hoc}))
+
+(api/defendpoint POST "/"
+  "Execute a query and retrieve the results in the usual format."
+  [:as {body :body}]
+  (if (has-source-query? body)
+    (execute-nested-query body)
+    (execute-query body)))
 
 ;; TODO - this is no longer used. Should we remove it?
 (api/defendpoint POST "/duration"

@@ -11,6 +11,7 @@
              [util :as u]]
             [metabase.api.common :as api]
             [metabase.models
+             [card :refer [Card]]
              [database :as database :refer [Database protected-password]]
              [field :refer [Field]]
              [interface :as mi]
@@ -47,16 +48,54 @@
                                       (user-has-perms? perms/native-read-path)      :read
                                       :else                                         :none)))))
 
-(defn- dbs-list [include-tables?]
+(defn- source-query-cards
+  "Fetch the Cards that can be used as source queries (e.g. presented as virtual tables)."
+  []
+  (as-> (db/select [Card :name :description :database_id :dataset_query :id :collection_id]
+        :result_metadata [:not= nil]
+        {:order_by [:%lower.name :asc]}) <>
+      (filter (fn [{database-id :database_id, :as card}]
+                (and database-id
+                     (driver/driver-supports? (driver/database-id->driver database-id) :nested-queries)
+                     (mi/can-read? card)))
+              <>)
+      (hydrate <> :collection)))
+
+(defn- cards-virtual-tables
+  "Return a sequence of 'virtual' Table metadata for eligible Cards.
+   (This takes the Cards from `source-query-cards` and returns them in a format suitable for consumption by the Query Builder.)"
+  []
+  (for [card (source-query-cards)]
+    {:id           (str "card__" (:id card))
+     :db_id        database/virtual-id
+     :display_name (:name card)
+     :schema       (get-in card [:collection :name] "All questions")
+     :description  (:description card)}))
+
+;; "Virtual" tables for saved cards simulate the db->schema->table hierarchy by doing fake-db->collection->card
+(defn- add-virtual-tables-for-saved-cards [dbs]
+  (let [virtual-tables (cards-virtual-tables)]
+    ;; only add the 'Saved Questions' DB if there are Cards that can be used
+    (if-not (seq virtual-tables)
+      dbs
+      (conj (vec dbs)
+            {:name     "Saved Questions"
+             :id       database/virtual-id
+             :features #{:basic-aggregations}
+             :tables   (cards-virtual-tables)}))))
+
+(defn- dbs-list [include-tables? include-cards?]
   (when-let [dbs (seq (filter mi/can-read? (db/select Database {:order-by [:%lower.name]})))]
-    (add-native-perms-info (if-not include-tables?
-                             dbs
-                             (add-tables dbs)))))
+    (cond-> (add-native-perms-info dbs)
+      include-tables? add-tables
+      include-cards?  add-virtual-tables-for-saved-cards)))
 
 (api/defendpoint GET "/"
   "Fetch all `Databases`."
-  [include_tables]
-  (or (dbs-list include_tables)
+  [include_tables include_cards]
+  {include_tables (s/maybe su/BooleanString)
+   include_cards  (s/maybe su/BooleanString)}
+  (or (dbs-list include_tables include_cards)
       []))
 
 

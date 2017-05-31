@@ -11,7 +11,7 @@
             [metabase.util.schema :as su]
             [schema.core :as s])
   (:import [metabase.query_processor.interface AgFieldRef BetweenFilter ComparisonFilter CompoundFilter Expression ExpressionRef
-            FieldPlaceholder RelativeDatetime StringFilter Value ValuePlaceholder]))
+            FieldLiteral FieldPlaceholder RelativeDatetime StringFilter Value ValuePlaceholder]))
 
 ;;; # ------------------------------------------------------------ Clause Handlers ------------------------------------------------------------
 
@@ -36,6 +36,12 @@
     (do (log/warn (u/format-color 'yellow "Referring to fields by their bare ID (%d) is deprecated in MBQL '98. Please use [:field-id %d] instead." f f))
         (field-id f))
     f))
+
+(s/defn ^:ql ^:always-validate field-literal :- FieldLiteral
+  "Generic reference to a Field by FIELD-NAME. This is intended for use when using nested queries so as to allow one to refer to the fields coming back from
+   the source query."
+  [field-name :- su/KeywordOrString, field-type :- su/KeywordOrString]
+  (i/strict-map->FieldLiteral {:field-name (u/keyword->qualified-name field-name), :base-type (keyword field-type)}))
 
 (s/defn ^:ql ^:always-validate named :- i/Aggregation
   "Specify a CUSTOM-NAME to use for a top-level AGGREGATION-OR-EXPRESSION in the results.
@@ -69,6 +75,7 @@
   (cond
     (instance? ValuePlaceholder v) v
     (instance? Value v)            v
+    (instance? FieldLiteral f)     (i/map->Value {:value v, :field f})
     :else                          (i/map->ValuePlaceholder {:field-placeholder (field f), :value v})))
 
 (s/defn ^:private ^:always-validate field-or-value
@@ -372,12 +379,26 @@
 ;;; ## source-table
 
 (s/defn ^:ql ^:always-validate source-table
-  "Specify the ID of the table to query (required).
+  "Specify the ID of the table to query.
+   Queries must specify *either* `:source-table` or `:source-query`.
 
      (source-table {} 100)"
   [query, table-id :- s/Int]
   (assoc query :source-table table-id))
 
+(declare expand-inner)
+
+(s/defn ^:ql ^:always-validate source-query
+  "Specify a query to use as the source for this query (e.g., as a `SUBSELECT`).
+   Queries must specify *either* `:source-table` or `:source-query`.
+
+     (source-query {} (-> (source-table {} 100)
+                          (limit 10)))"
+  {:added "0.25.0"}
+  [query, source-query :- su/Map]
+  (assoc query :source-query (if (:native source-query)
+                               source-query
+                               (expand-inner source-query))))
 
 
 ;;; ## calculated columns

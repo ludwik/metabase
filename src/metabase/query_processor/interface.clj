@@ -160,11 +160,17 @@
 ;; TODO - add a method to get matching expression from the query?
 
 
+;; TODO - maybe we should figure out some way to have the schema validate that the driver supports field literals, like we do for some of the other clauses.
+;; Ideally we'd do that in a more generic way (perhaps in expand, we could make the clauses specify required feature metadata and have that get checked automatically?)
+(s/defrecord FieldLiteral [field-name :- su/NonBlankString
+                           base-type  :- su/FieldType]
+  clojure.lang.Named
+  (getName [_] field-name))
 
 
 (def FieldPlaceholderOrExpressionRef
-  "Schema for either a `FieldPlaceholder` or `ExpressionRef`."
-  (s/named (s/cond-pre FieldPlaceholder ExpressionRef)
+  "Schema for either a `FieldPlaceholder`, `FieldLiteral`, or `ExpressionRef`."
+  (s/named (s/cond-pre FieldPlaceholder ExpressionRef FieldLiteral)
            "Valid field or expression reference."))
 
 (s/defrecord RelativeDatetime [amount :- s/Int
@@ -185,6 +191,7 @@
   "Schema for a anything that is considered a valid 'field'."
   (s/named (s/cond-pre Field
                        FieldPlaceholder
+                       FieldLiteral
                        AgFieldRef
                        Expression
                        ExpressionRef)
@@ -356,18 +363,38 @@
            "Valid page clause"))
 
 
+;;; source-query
+
+(declare Query)
+
+(def SourceQuery
+  "Schema for a valid value for a `:source-query` clause."
+  (s/if :native
+    {:native s/Any}     ; TODO - what about native params (is that applicable?)
+    (s/recursive #'Query)))
+
 ;;; +----------------------------------------------------------------------------------------------------------------------------------------------------------------+
 ;;; |                                                                             QUERY                                                                              |
 ;;; +----------------------------------------------------------------------------------------------------------------------------------------------------------------+
 
 (def Query
   "Schema for an MBQL query."
-  {(s/optional-key :aggregation) [Aggregation]
-   (s/optional-key :breakout)    [FieldPlaceholderOrExpressionRef]
-   (s/optional-key :fields)      [AnyField]
-   (s/optional-key :filter)      Filter
-   (s/optional-key :limit)       su/IntGreaterThanZero
-   (s/optional-key :order-by)    [OrderBy]
-   (s/optional-key :page)        Page
-   (s/optional-key :expressions) {s/Keyword Expression}
-   :source-table                 su/IntGreaterThanZero})
+  (s/constrained
+   {(s/optional-key :aggregation)  [Aggregation]
+    (s/optional-key :breakout)     [FieldPlaceholderOrExpressionRef]
+    (s/optional-key :fields)       [AnyField]
+    (s/optional-key :filter)       Filter
+    (s/optional-key :limit)        su/IntGreaterThanZero
+    (s/optional-key :order-by)     [OrderBy]
+    (s/optional-key :page)         Page
+    (s/optional-key :expressions)  {s/Keyword Expression}
+    (s/optional-key :source-table) su/IntGreaterThanZero
+    (s/optional-key :source-query) SourceQuery}
+   (fn [{:keys [source-table source-query native-source-query]}]
+     (and (or source-table
+              source-query
+              native-source-query)
+          (not (and source-table
+                    source-query
+                    native-source-query))))
+   "Query must specify either `:source-table` or `:source-query`, but not both."))

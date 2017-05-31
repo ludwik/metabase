@@ -17,7 +17,7 @@
             [metabase.util.honeysql-extensions :as hx])
   (:import clojure.lang.Keyword
            java.sql.SQLException
-           [metabase.query_processor.interface AgFieldRef DateTimeField DateTimeValue Expression ExpressionRef Field RelativeDateTimeValue Value]))
+           [metabase.query_processor.interface AgFieldRef DateTimeField DateTimeValue Expression ExpressionRef Field FieldLiteral RelativeDateTimeValue Value]))
 
 (def ^:dynamic *query*
   "The outer query currently being processed."
@@ -76,6 +76,10 @@
         (isa? special-type :type/UNIXTimestampSeconds)      (sql/unix-timestamp->timestamp (driver) field :seconds)
         (isa? special-type :type/UNIXTimestampMilliseconds) (sql/unix-timestamp->timestamp (driver) field :milliseconds)
         :else                                               field)))
+
+  FieldLiteral
+  (formatted [{:keys [field-name]}]
+    (keyword field-name))
 
   DateTimeField
   (formatted [{unit :unit, field :field}]
@@ -247,12 +251,23 @@
   {:pre [table-name]}
   (h/from honeysql-form (hx/qualify-and-escape-dots schema table-name)))
 
+(declare apply-clauses)
+
+(defn- apply-source-query [driver honeysql-form {{:keys [native], :as source-query} :source-query}]
+  ;; TODO - what alias should we give the source query?
+  (assoc honeysql-form
+    :from [[(if native
+              (hsql/raw (str "(" native ")"))
+              (apply-clauses driver {} source-query))
+            :source]]))
+
 (def ^:private clause-handlers
   ;; 1) Use the vars rather than the functions themselves because them implementation
   ;;    will get swapped around and  we'll be left with old version of the function that nobody implements
   ;; 2) This is a vector rather than a map because the order the clauses get handled is important for some drivers.
   ;;    For example, Oracle needs to wrap the entire query in order to apply its version of limit (`WHERE ROWNUM`).
   [:source-table (u/drop-first-arg apply-source-table)
+   :source-query apply-source-query
    :aggregation  #'sql/apply-aggregation
    :breakout     #'sql/apply-breakout
    :fields       #'sql/apply-fields
@@ -271,7 +286,8 @@
                           honeysql-form)]
       (if (seq more)
         (recur honeysql-form more)
-        honeysql-form))))
+        ;; ok, we're done; if no `:select` clause was specified (for whatever reason) put a default (`SELECT *`) one in
+        (update honeysql-form :select #(if (seq %) % [:*]))))))
 
 
 (defn build-honeysql-form
