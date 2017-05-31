@@ -52,14 +52,14 @@
   "Fetch the Cards that can be used as source queries (e.g. presented as virtual tables)."
   []
   (as-> (db/select [Card :name :description :database_id :dataset_query :id :collection_id]
-        :result_metadata [:not= nil]
-        {:order_by [:%lower.name :asc]}) <>
-      (filter (fn [{database-id :database_id, :as card}]
-                (and database-id
-                     (driver/driver-supports? (driver/database-id->driver database-id) :nested-queries)
-                     (mi/can-read? card)))
-              <>)
-      (hydrate <> :collection)))
+          :result_metadata [:not= nil]
+          {:order-by [[:%lower.name :asc]]}) <>
+    (filter (fn [{database-id :database_id, :as card}]
+              (and database-id
+                   (driver/driver-supports? (driver/database-id->driver database-id) :nested-queries)
+                   (mi/can-read? card)))
+            <>)
+    (hydrate <> :collection)))
 
 (defn- cards-virtual-tables
   "Return a sequence of 'virtual' Table metadata for eligible Cards.
@@ -82,7 +82,7 @@
             {:name     "Saved Questions"
              :id       database/virtual-id
              :features #{:basic-aggregations}
-             :tables   (cards-virtual-tables)}))))
+             :tables   virtual-tables}))))
 
 (defn- dbs-list [include-tables? include-cards?]
   (when-let [dbs (seq (filter mi/can-read? (db/select Database {:order-by [:%lower.name]})))]
