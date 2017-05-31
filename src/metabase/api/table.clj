@@ -113,7 +113,8 @@
 (api/defendpoint GET "/card__:id/fks"
   "Return FK info for the 'virtual' table for a Card. This is always empty, so this endpoint
    serves mainly as a placeholder to avoid having to change anything on the frontend."
-  [])
+  []
+  []) ; return empty array
 
 
 (api/defendpoint GET "/:id/fks"

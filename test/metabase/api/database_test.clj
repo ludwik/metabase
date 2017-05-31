@@ -6,7 +6,7 @@
             [metabase.models
              [card :refer [Card]]
              [collection :refer [Collection]]
-             [database :refer [Database]]
+             [database :as database :refer [Database]]
              [field :refer [Field]]
              [table :refer [Table]]]
             [metabase.test
@@ -18,8 +18,7 @@
             [toucan
              [db :as db]
              [hydrate :as hydrate]]
-            [toucan.util.test :as tt]
-            [metabase.models.database :as database]))
+            [toucan.util.test :as tt]))
 
 ;; HELPER FNS
 
