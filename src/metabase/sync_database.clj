@@ -14,7 +14,8 @@
              [introspect :as introspect]
              [sync :as sync]
              [sync-dynamic :as sync-dynamic]]
-            [toucan.db :as db]))
+            [toucan.db :as db]
+            [metabase.sync-database.classify :as classify]))
 
 (defonce ^:private currently-syncing-dbs (atom #{}))
 
@@ -62,7 +63,8 @@
 
       ;; analyze if we are supposed to
       (when full-sync?
-        (analyze/analyze-table-data-shape! driver table)))
+        (analyze/analyze-table-data-shape! driver table)
+        (classify/classify-table! driver table)))
 
     (events/publish-event! :table-sync {:table_id (:id table)})
     (log/info (u/format-color 'magenta "Finished syncing table '%s' from %s database '%s'. (%s)" (:display_name table) (name driver) (:name database)

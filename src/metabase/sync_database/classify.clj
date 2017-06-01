@@ -1,9 +1,18 @@
 (ns metabase.sync-database.classify
   (:require [clojure.math.numeric-tower :as math]
             [clojure.tools.logging :as log]
-            [metabase.models.field-values :as field-values]
+            [metabase.models
+             [field :as field]
+             [field-fingerprint :refer [FieldFingerprint]]
+             [field-values :as field-values]
+             [table :as table]
+             [table-fingerprint :refer [TableFingerprint]]]
+            [metabase.sync-database
+             [infer-special-type :as infer-special-type]
+             [interface :as i]]
             [metabase.util :as u]
-            [metabase.sync-database.infer-special-type :as infer-special-type]))
+            [schema.core :as schema]
+            [toucan.db :as db]))
 
 (def ^:private ^:const ^Float percent-valid-url-threshold
   "Fields that have at least this percent of values that are valid URLs should be given a special type of `:type/URL`."
@@ -143,11 +152,61 @@
        (test:primary-key        fingerprint)
        (test:foreign-key        fingerprint)))
 
-(defn classify-table! [table-fingerprint field-fingerprints]
+(defn classify-table-fields [table-fingerprint field-fingerprints]
   ""
   {:row_count (:row_count table-fingerprint)
-   :fields (map #(test:new-field % {:id (:id %)}) field-fingerprints)}
-  #_(let [new-field? #_FIXME true #_(contains? new-field-ids id)]
-        (cond->> {:id id}
-          (test-for-cardinality? field new-field?) (test:cardinality-and-extract-field-values field)
-          new-field?                               (test:new-field driver field))))
+   :fields (map #(test:new-field % {:id (:id %)}) field-fingerprints)})
+
+
+(defn classify-and-save-table!
+  "Analyze the data shape for a single `Table`."
+  [driver {table-id :id, :as table}]
+  (let [fields (table/fields table)
+        field-fingerprints (db/select FieldFingerprint :table_id table-id)
+        table-fingerprint  (db/select TableFingerprint :table_id table-id)]
+    (when-let [table-stats (u/prog1 (classify-table-fields table-fingerprint field-fingerprints)
+                             (when <>
+                               (schema/validate i/AnalyzeTable <>)))]
+      (doseq [{:keys [id preview-display special-type]} (:fields table-stats)]
+        (when (and id (or preview-display special-type))
+          (db/update-non-nil-keys! field/Field id
+            ;; if a field marked `preview-display` as false then set the visibility
+            ;; type to `:details-only` (see models.field/visibility-types)
+            :visibility_type (when (false? preview-display) :details-only)
+            :special_type    special-type)))
+      (db/update-where! field/Field {:table_id        table-id
+                                     :visibility_type [:not= "retired"]}
+      :last_analyzed (u/new-sql-timestamp))
+      table-stats)))
+
+(defn classify-tables!
+  "classify and save all previously saved fingerprints for tables in this database"
+  [driver {database-id :id, :as database}]
+  (let [start-time-ns         (System/nanoTime)
+        tables                (db/select table/Table, :db_id database-id, :active true, :visibility_type nil)
+        tables-count          (count tables)
+        finished-tables-count (atom 0)]
+    (doseq [{table-name :name, :as table} tables]
+      (try
+        (classify-table! driver table)
+        (catch Throwable t
+          (log/error "Unexpected error analyzing table" t))
+        (finally
+          (u/prog1 (swap! finished-tables-count inc)
+            (log/info (u/format-color 'blue "%s Analyzed table '%s'." (u/emoji-progress-bar <> tables-count) table-name))))))
+
+    (log/info (u/format-color 'blue "Analysis of %s database '%s' completed (%s)." (name driver) (:name database) (u/format-nanoseconds (- (System/nanoTime) start-time-ns))))))
+
+(defn classify-table!
+  "classify one table"
+  [table]
+  (classify-and-save-table! (->> table
+                                  table/database
+                                  :id
+                                  driver/database-id->driver)
+                            table))
+
+(defn classify-database!
+  "analyze all the tables in one database"
+  [db]
+  (classify-tables! (->> db :id driver/database-id->driver) db))
