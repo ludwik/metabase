@@ -2,17 +2,13 @@
 
 import React from "react";
 import PropTypes from "prop-types";
-import QueryVisualizationObjectDetailTable from './QueryVisualizationObjectDetailTable.jsx';
 import VisualizationErrorMessage from './VisualizationErrorMessage';
 import Visualization from "metabase/visualizations/components/Visualization.jsx";
 import { datasetContainsNoResults } from "metabase/lib/dataset";
 
-const VisualizationResult = ({card, isObjectDetail, lastRunDatasetQuery, result, ...props}) => {
+const VisualizationResult = ({ card, isObjectDetail, lastRunDatasetQuery, result, ...props }) => {
     const noResults = datasetContainsNoResults(result.data);
-
-    if (isObjectDetail) {
-        return <QueryVisualizationObjectDetailTable data={result.data} {...props} />
-    } else if (noResults) {
+    if (noResults) {
         // successful query but there were 0 rows returned with the result
         return <VisualizationErrorMessage
                   type='noRows'
@@ -30,15 +26,18 @@ const VisualizationResult = ({card, isObjectDetail, lastRunDatasetQuery, result,
         // BUT the last executed "dataset_query" (to ensure data matches the query)
         let vizCard = {
             ...card,
+            display: isObjectDetail ? "object" : card.display,
             dataset_query: lastRunDatasetQuery
         };
-        return <Visualization
-                  series={[{ card: vizCard, data: result.data }]}
-                  onChangeCardAndRun={props.setCardAndRun}
-                  isEditing={true}
-                  // Table:
-                  {...props}
-              />
+        return (
+            <Visualization
+                series={[{ card: vizCard, data: result.data }]}
+                onChangeCardAndRun={props.setCardAndRun}
+                isEditing={true}
+                // Table:
+                {...props}
+             />
+         )
     }
 }
 
